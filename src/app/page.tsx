@@ -14,6 +14,7 @@ import { SecurityCheck } from "./components/global/SecurityCheck";
 import { FileInfo } from "./components/global/FileInfo";
 import { DownloadProgress } from "./components/global/DownloadProgress";
 import { RiskConfirmationModal } from "./components/global/RiskConfirmationModal";
+import { BuyMeCoffee } from "./components/global/BuyMeCoffee";
 import {
   Download,
   Link,
@@ -26,7 +27,11 @@ import {
   Share2,
   Eye,
   AlertTriangle,
-  Lock,
+  FileDown,
+  Star,
+  ExternalLink,
+  Youtube,
+  FileVideo,
 } from "lucide-react";
 
 interface FileData {
@@ -38,6 +43,8 @@ interface FileData {
   isSecure: boolean;
   lastModified?: string;
   isWebContent?: boolean;
+  downloadUrl?: string;
+  isRealVideo?: boolean;
 }
 
 interface SecurityResult {
@@ -64,6 +71,8 @@ export default function Home() {
   const [downloadAttempts, setDownloadAttempts] = useState(0);
   const [showRiskModal, setShowRiskModal] = useState(false);
   const [userAcceptedRisk, setUserAcceptedRisk] = useState(false);
+  const [shareSuccess, setShareSuccess] = useState(false);
+  const [downloadSuccess, setDownloadSuccess] = useState(false);
 
   const validateAndDetectFile = useCallback(async (inputUrl: string) => {
     if (!inputUrl.trim()) {
@@ -77,6 +86,7 @@ export default function Home() {
     setFileData(null);
     setSecurityResult(null);
     setUserAcceptedRisk(false);
+    setDownloadSuccess(false);
 
     try {
       // Step 1: URL Validation
@@ -96,18 +106,18 @@ export default function Home() {
       const securityCheck = await checkUrlSecurity(inputUrl);
       setSecurityResult(securityCheck);
 
-      // Step 3: File Detection - Always try to detect
+      // Step 3: File Detection
       const fileInfo = await detectFileInfo(inputUrl);
       if (fileInfo) {
         setFileData(fileInfo);
       } else {
         setWarnings((prev) => [
           ...prev,
-          "نتوانستیم اطلاعات فایل را شناسایی کنیم، اما می‌توانید ادامه دهید",
+          "نتوانستیم اطلاعات فایل را شناسایی کنیم",
         ]);
       }
     } catch (error) {
-      setWarnings(["خطا در پردازش لینک، اما می‌توانید دانلود را امتحان کنید"]);
+      setErrors(["خطا در پردازش لینک - لطفاً لینک را بررسی کنید"]);
       console.error("File detection error:", error);
     } finally {
       setIsValidating(false);
@@ -142,7 +152,7 @@ export default function Home() {
       return;
     }
 
-    if (downloadAttempts >= 5) {
+    if (downloadAttempts >= 3) {
       setErrors(["حداکثر تعداد تلاش برای دانلود به پایان رسیده است"]);
       return;
     }
@@ -150,6 +160,7 @@ export default function Home() {
     setIsDownloading(true);
     setDownloadProgress(0);
     setDownloadAttempts((prev) => prev + 1);
+    setErrors([]);
 
     try {
       const downloadUrl = url;
@@ -158,11 +169,18 @@ export default function Home() {
       await downloadFile(downloadUrl, fileName, (progress) => {
         setDownloadProgress(progress);
       });
-    } catch (error) {
-      setErrors(["خطا در دانلود فایل. لطفاً مجدداً تلاش کنید"]);
+
+      setDownloadProgress(100);
+      setDownloadSuccess(true);
+      setTimeout(() => setDownloadSuccess(false), 5000);
+    } catch (error: any) {
+      setErrors([
+        error.message || "خطا در دانلود فایل. لطفاً مجدداً تلاش کنید",
+      ]);
       console.error("Download error:", error);
     } finally {
       setIsDownloading(false);
+      setTimeout(() => setDownloadProgress(0), 2000);
     }
   };
 
@@ -179,6 +197,33 @@ export default function Home() {
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
       setErrors(["خطا در کپی کردن لینک"]);
+    }
+  };
+
+  const handleShare = async () => {
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: "دانلود فایل",
+          text: "این لینک را با دوستان خود به اشتراک بگذارید",
+          url: url,
+        });
+        setShareSuccess(true);
+        setTimeout(() => setShareSuccess(false), 2000);
+      } else {
+        await navigator.clipboard.writeText(url);
+        setShareSuccess(true);
+        setTimeout(() => setShareSuccess(false), 2000);
+      }
+    } catch (error) {
+      console.error("Share failed:", error);
+      try {
+        await navigator.clipboard.writeText(url);
+        setShareSuccess(true);
+        setTimeout(() => setShareSuccess(false), 2000);
+      } catch (clipboardError) {
+        setErrors(["خطا در اشتراک‌گذاری لینک"]);
+      }
     }
   };
 
@@ -203,38 +248,41 @@ export default function Home() {
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl animate-pulse delay-500"></div>
       </div>
 
+      {/* Buy Me Coffee Button */}
+      <BuyMeCoffee />
+
       <div className="w-full max-w-lg mx-auto relative z-10">
         {/* Header Section */}
         <div className="text-center mb-10">
           <div className="mb-6">
             <div className="w-20 h-20 bg-gradient-to-br from-purple-400 via-purple-600 to-amber-400 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-purple-500/25 animate-pulse">
-              <Share2 className="w-10 h-10 text-white" />
+              <FileDown className="w-10 h-10 text-white" />
             </div>
           </div>
           <h1 className="text-3xl md:text-4xl font-bold text-white mb-3 leading-relaxed">
-            به اشتراک{" "}
+            دانلودر{" "}
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-200 to-amber-400">
-              آنی دریافت
+              مستقیم
             </span>{" "}
-            خوش آمدید
+            فایل
           </h1>
           <p className="text-gray-300 text-base mb-8">
-            هر لینکی را وارد کنید - ویدیو، فایل، محتوا - همه چیز قابل دانلود است
+            دانلود مستقیم فایل‌ها - فقط یوتیوب و لینک‌های مستقیم
           </p>
 
           {/* Feature Pills */}
           <div className="flex flex-wrap justify-center gap-2 mb-8">
             <div className="flex items-center gap-2 bg-white/10 backdrop-blur-sm rounded-full px-3 py-1 text-xs text-gray-300">
-              <Zap className="w-3 h-3 text-amber-400" />
-              دانلود سریع
+              <Youtube className="w-3 h-3 text-red-400" />
+              یوتیوب مستقیم
             </div>
             <div className="flex items-center gap-2 bg-white/10 backdrop-blur-sm rounded-full px-3 py-1 text-xs text-gray-300">
-              <Shield className="w-3 h-3 text-green-400" />
-              هشدار امنیتی
+              <FileVideo className="w-3 h-3 text-green-400" />
+              لینک مستقیم فایل
             </div>
             <div className="flex items-center gap-2 bg-white/10 backdrop-blur-sm rounded-full px-3 py-1 text-xs text-gray-300">
-              <Eye className="w-3 h-3 text-blue-400" />
-              همه فرمت‌ها
+              <Shield className="w-3 h-3 text-blue-400" />
+              بدون راهنمای متنی
             </div>
           </div>
         </div>
@@ -249,14 +297,14 @@ export default function Home() {
             {/* Input Section */}
             <div className="mb-6">
               <label className="block text-white text-sm font-medium mb-4 text-right flex items-center justify-end gap-2">
-                <span>لینک مورد نظر (YouTube، وب‌سایت، فایل و ...)</span>
+                <span>لینک یوتیوب یا لینک مستقیم فایل</span>
                 <Link className="w-4 h-4 text-purple-400" />
               </label>
               <div className="relative group">
                 <Inputs
                   value={url}
                   onChange={handleUrlChange}
-                  placeholder="https://youtube.com/watch?v=... یا هر لینک دیگری"
+                  placeholder="https://youtube.com/watch?v=... یا لینک مستقیم فایل"
                   className={`w-full h-14 rounded-2xl p-4 pr-14 border-2 ${
                     errors.length > 0
                       ? "border-red-500/50 focus:border-red-500"
@@ -273,7 +321,7 @@ export default function Home() {
               <button
                 onClick={handleValidateUrl}
                 disabled={!url.trim() || isValidating}
-                className="w-full mt-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 disabled:from-gray-600 disabled:to-gray-700 text-white font-medium py-3 px-4 rounded-xl transition-all duration-200 flex items-center justify-center gap-2"
+                className="w-full mt-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 disabled:from-gray-600 disabled:to-gray-700 text-white font-medium py-3 px-4 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
               >
                 {isValidating ? (
                   <>
@@ -288,6 +336,23 @@ export default function Home() {
                 )}
               </button>
             </div>
+
+            {/* Success Message */}
+            {downloadSuccess && (
+              <div className="mb-6 p-5 bg-gradient-to-r from-green-500/10 to-emerald-500/10 border border-green-500/30 rounded-2xl animate-in slide-in-from-top duration-300">
+                <div className="flex items-center gap-4">
+                  <CheckCircle className="w-6 h-6 text-green-400" />
+                  <div>
+                    <p className="text-green-400 font-medium">
+                      دانلود شروع شد!
+                    </p>
+                    <p className="text-gray-300 text-sm">
+                      فایل در حال دانلود است یا در پوشه دانلود شما ذخیره شده
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Error Messages */}
             {errors.length > 0 && (
@@ -326,9 +391,6 @@ export default function Home() {
                         </li>
                       ))}
                     </ul>
-                    <p className="text-xs text-gray-400 mt-2">
-                      می‌توانید با آگاهی از خطرات ادامه دهید
-                    </p>
                   </div>
                 </div>
               </div>
@@ -362,7 +424,7 @@ export default function Home() {
               <button
                 onClick={handleDownload}
                 disabled={!canDownload || isDownloading}
-                className="w-full bg-gradient-to-r from-purple-600 via-purple-700 to-purple-800 hover:from-purple-700 hover:via-purple-800 hover:to-purple-900 disabled:from-gray-600 disabled:to-gray-700 text-white font-semibold py-4 px-6 rounded-2xl shadow-xl hover:shadow-purple-500/25 transition-all duration-300 flex items-center justify-center gap-3 group relative overflow-hidden"
+                className="w-full bg-gradient-to-r from-purple-600 via-purple-700 to-purple-800 hover:from-purple-700 hover:via-purple-800 hover:to-purple-900 disabled:from-gray-600 disabled:to-gray-700 text-white font-semibold py-4 px-6 rounded-2xl shadow-xl hover:shadow-purple-500/25 transition-all duration-300 flex items-center justify-center gap-3 group relative overflow-hidden cursor-pointer disabled:cursor-not-allowed"
               >
                 <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/10 to-white/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700"></div>
                 {isDownloading ? (
@@ -373,9 +435,7 @@ export default function Home() {
                 ) : (
                   <>
                     <Download className="w-5 h-5 group-hover:animate-bounce" />
-                    {securityResult?.riskLevel === "high"
-                      ? "دانلود با خطر بالا"
-                      : "دانلود محتوا"}
+                    دانلود مستقیم فایل
                   </>
                 )}
               </button>
@@ -384,7 +444,7 @@ export default function Home() {
                 <button
                   onClick={handleCopy}
                   disabled={!url.trim()}
-                  className="bg-white/10 hover:bg-white/20 disabled:bg-white/5 text-white font-medium py-3 px-4 rounded-xl border border-white/20 hover:border-white/40 transition-all duration-200 flex items-center justify-center gap-2 group"
+                  className="bg-white/10 hover:bg-white/20 disabled:bg-white/5 text-white font-medium py-3 px-4 rounded-xl border border-white/20 hover:border-white/40 transition-all duration-200 flex items-center justify-center gap-2 group cursor-pointer disabled:cursor-not-allowed"
                 >
                   {copied ? (
                     <>
@@ -399,9 +459,22 @@ export default function Home() {
                   )}
                 </button>
 
-                <button className="bg-white/10 hover:bg-white/20 text-white font-medium py-3 px-4 rounded-xl border border-white/20 hover:border-white/40 transition-all duration-200 flex items-center justify-center gap-2 group">
-                  <Share2 className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                  اشتراک
+                <button
+                  onClick={handleShare}
+                  disabled={!url.trim()}
+                  className="bg-white/10 hover:bg-white/20 disabled:bg-white/5 text-white font-medium py-3 px-4 rounded-xl border border-white/20 hover:border-white/40 transition-all duration-200 flex items-center justify-center gap-2 group cursor-pointer disabled:cursor-not-allowed"
+                >
+                  {shareSuccess ? (
+                    <>
+                      <CheckCircle className="w-4 h-4 text-green-400" />
+                      <span className="text-green-400">اشتراک شد</span>
+                    </>
+                  ) : (
+                    <>
+                      <Share2 className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                      اشتراک
+                    </>
+                  )}
                 </button>
               </div>
             </div>
@@ -411,7 +484,7 @@ export default function Home() {
               <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl">
                 <div className="flex items-center gap-2 text-amber-400 text-sm">
                   <AlertTriangle className="w-4 h-4" />
-                  <span>تعداد تلاش: {downloadAttempts}/5</span>
+                  <span>تعداد تلاش: {downloadAttempts}/3</span>
                 </div>
               </div>
             )}
@@ -421,13 +494,11 @@ export default function Home() {
         {/* Footer */}
         <div className="text-center mt-8">
           <div className="flex items-center justify-center gap-2 text-gray-400 text-sm mb-2">
-            <Shield className="w-4 h-4 text-green-400" />
-            <span>
-              همه لینک‌ها بررسی امنیتی می‌شوند و هشدارهای لازم ارائه می‌گردد
-            </span>
+            <Star className="w-4 h-4 text-amber-400" />
+            <span>دانلود مستقیم فایل - فقط یوتیوب و لینک‌های مستقیم</span>
           </div>
           <p className="text-gray-500 text-xs">
-            پشتیبانی از YouTube، وب‌سایت‌ها، فایل‌ها و محتوای آنلاین
+            بدون راهنمای متنی - فقط فایل‌های واقعی
           </p>
         </div>
       </div>

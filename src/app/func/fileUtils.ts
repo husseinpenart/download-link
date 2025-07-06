@@ -13,6 +13,7 @@ interface FileInfo {
   isSecure: boolean;
   lastModified?: string;
   isWebContent?: boolean;
+  isRealVideo?: boolean;
 }
 
 interface SecurityResult {
@@ -23,121 +24,29 @@ interface SecurityResult {
   canProceed: boolean;
 }
 
-// Allowed file extensions (expanded list)
-const ALLOWED_EXTENSIONS = [
-  "pdf",
-  "doc",
-  "docx",
-  "txt",
-  "rtf",
-  "xls",
-  "xlsx",
-  "ppt",
-  "pptx",
-  "jpg",
-  "jpeg",
-  "png",
-  "gif",
-  "webp",
-  "svg",
-  "bmp",
-  "tiff",
-  "mp4",
-  "avi",
-  "mov",
-  "wmv",
-  "flv",
-  "mkv",
-  "webm",
-  "m4v",
-  "mp3",
-  "wav",
-  "flac",
-  "aac",
-  "ogg",
-  "wma",
-  "zip",
-  "rar",
-  "7z",
-  "tar",
-  "gz",
-  "bz2",
-  "exe",
-  "msi",
-  "dmg",
-  "deb",
-  "rpm",
-  "apk",
-  "html",
-  "htm",
-  "css",
-  "js",
-  "json",
-  "xml",
-];
-
-// High-risk domains that should show strong warnings
-const HIGH_RISK_DOMAINS = [
-  "malware-site.com",
-  "phishing-example.net",
-  "suspicious-downloads.org",
-];
-
-// Maximum file size (10GB in bytes) - increased limit
-const MAX_FILE_SIZE = 10 * 1024 * 1024 * 1024;
-
 export function validateUrl(url: string): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  // Basic URL format validation
   try {
     const urlObj = new URL(url);
 
-    // Check protocol - only block dangerous protocols
     if (!["http:", "https:", "ftp:"].includes(urlObj.protocol)) {
       errors.push("پروتکل غیرمجاز - فقط HTTP، HTTPS و FTP پشتیبانی می‌شود");
     }
 
-    // Check for high-risk domains (warning, not blocking)
-    if (HIGH_RISK_DOMAINS.some((domain) => urlObj.hostname.includes(domain))) {
-      warnings.push("این دامنه در لیست پرخطر قرار دارد");
-    }
-
-    // Warn about shortened URLs but don't block
-    if (
-      urlObj.hostname.includes("bit.ly") ||
-      urlObj.hostname.includes("tinyurl") ||
-      urlObj.hostname.includes("t.co")
-    ) {
-      warnings.push("لینک کوتاه شده - ممکن است به آدرس نامعلومی منتقل شود");
-    }
-
-    // Warn about IP addresses but don't block
-    if (/^\d+\.\d+\.\d+\.\d+/.test(urlObj.hostname)) {
-      warnings.push(
-        "استفاده از آدرس IP - ممکن است نشان‌دهنده محتوای مشکوک باشد"
-      );
-    }
-
-    // Warn about non-HTTPS
     if (urlObj.protocol === "http:") {
-      warnings.push("اتصال غیرامن (HTTP) - اطلاعات شما رمزگذاری نمی‌شود");
+      warnings.push("اتصال غیرامن (HTTP) - ترجیحاً از HTTPS استفاده کنید");
     }
   } catch (error) {
     errors.push("فرمت لینک نامعتبر است");
   }
 
-  return {
-    isValid: errors.length === 0,
-    errors,
-    warnings,
-  };
+  return { isValid: errors.length === 0, errors, warnings };
 }
 
 export async function checkUrlSecurity(url: string): Promise<SecurityResult> {
-  // Simulate security check delay
-  await new Promise((resolve) => setTimeout(resolve, 1500));
+  await new Promise((resolve) => setTimeout(resolve, 300));
 
   const threats: string[] = [];
   const warnings: string[] = [];
@@ -146,184 +55,127 @@ export async function checkUrlSecurity(url: string): Promise<SecurityResult> {
   try {
     const urlObj = new URL(url);
 
-    // Check HTTPS - major factor for risk level
     if (urlObj.protocol !== "https:") {
-      warnings.push("اتصال غیرامن (HTTP) - خطر رهگیری اطلاعات");
+      warnings.push("اتصال غیرامن - ممکن است اطلاعات رهگیری شود");
       riskLevel = "medium";
     }
 
-    // Check for suspicious patterns (warnings, not threats)
-    const suspiciousPatterns = ["download-now", "free-crack", "keygen"];
-    const highRiskPatterns = ["malware", "virus", "trojan"];
-
-    if (
-      highRiskPatterns.some((pattern) => url.toLowerCase().includes(pattern))
-    ) {
-      threats.push("الگوی خطرناک در لینک شناسایی شد");
-      riskLevel = "high";
-    } else if (
-      suspiciousPatterns.some((pattern) => url.toLowerCase().includes(pattern))
-    ) {
-      warnings.push("الگوی مشکوک در لینک شناسایی شد");
-      riskLevel = riskLevel === "high" ? "high" : "medium";
-    }
-
-    // Check for known video/content platforms
-    const contentPlatforms = [
-      "youtube.com",
-      "youtu.be",
-      "vimeo.com",
-      "dailymotion.com",
-      "twitch.tv",
-    ];
-    if (
-      contentPlatforms.some((platform) => urlObj.hostname.includes(platform))
-    ) {
-      warnings.push(
-        "پلتفرم محتوا - ممکن است نیاز به ابزار خاص برای دانلود داشته باشد"
-      );
-      riskLevel = "low"; // Content platforms are generally safe
-    }
-
-    // Check for social media platforms
-    const socialPlatforms = [
-      "facebook.com",
-      "twitter.com",
-      "instagram.com",
-      "linkedin.com",
-    ];
-    if (
-      socialPlatforms.some((platform) => urlObj.hostname.includes(platform))
-    ) {
-      warnings.push("پلتفرم اجتماعی - ممکن است محتوا قابل دانلود مستقیم نباشد");
-    }
-
-    // Simulate reputation check - less aggressive
-    const randomRisk = Math.random();
-    if (randomRisk > 0.95) {
-      threats.push("دامنه دارای سابقه امنیتی بد است");
-      riskLevel = "high";
-    } else if (randomRisk > 0.85) {
-      warnings.push("دامنه جدید یا کم‌شناخته است");
-      riskLevel = riskLevel === "high" ? "high" : "medium";
-    }
-
-    // Check for file hosting services
-    const fileHosting = [
-      "drive.google.com",
-      "dropbox.com",
-      "onedrive.com",
-      "mega.nz",
-    ];
-    if (fileHosting.some((service) => urlObj.hostname.includes(service))) {
-      warnings.push(
-        "سرویس میزبانی فایل - ممکن است نیاز به احراز هویت داشته باشد"
-      );
+    if (url.includes("youtube.com") || url.includes("youtu.be")) {
+      warnings.push("یوتیوب: ممکن است محافظت ضد ربات فعال باشد");
+    } else {
+      warnings.push("دانلود مستقیم فایل - فقط لینک‌های مستقیم");
     }
   } catch (error) {
-    threats.push("خطا در بررسی امنیتی لینک");
-    riskLevel = "high";
+    warnings.push("خطا در بررسی امنیتی");
   }
 
-  return {
-    isSafe: threats.length === 0,
-    threats,
-    warnings,
-    riskLevel,
-    canProceed: true, // Always allow proceeding with user confirmation
-  };
+  return { isSafe: true, threats, warnings, riskLevel, canProceed: true };
 }
 
 export async function detectFileInfo(url: string): Promise<FileInfo | null> {
-  // Simulate file detection delay
-  await new Promise((resolve) => setTimeout(resolve, 2000));
+  await new Promise((resolve) => setTimeout(resolve, 200));
 
   try {
+    console.log("🔍 Detecting file info for:", url);
+
     const urlObj = new URL(url);
-    const pathname = urlObj.pathname;
-    let filename = pathname.split("/").pop() || "unknown-file";
-    let extension = "";
-    let isWebContent = false;
+    let filename = "download";
+    let extension = "mp4";
+    const isWebContent = true;
 
-    // Handle URLs without clear file extensions
-    if (!filename.includes(".") || filename.length < 3) {
-      // Check if it's a known content platform
-      if (
-        urlObj.hostname.includes("youtube.com") ||
-        urlObj.hostname.includes("youtu.be")
-      ) {
-        filename = "YouTube-Video.mp4";
-        extension = "mp4";
-        isWebContent = true;
-      } else if (urlObj.hostname.includes("vimeo.com")) {
-        filename = "Vimeo-Video.mp4";
-        extension = "mp4";
-        isWebContent = true;
-      } else if (
-        urlObj.hostname.includes("twitter.com") ||
-        urlObj.hostname.includes("x.com")
-      ) {
-        filename = "Twitter-Content.html";
-        extension = "html";
-        isWebContent = true;
-      } else {
-        // Generic web content
-        filename = `Web-Content-${Date.now()}.html`;
-        extension = "html";
-        isWebContent = true;
-      }
+    // Platform-specific naming
+    if (url.includes("youtube.com") || url.includes("youtu.be")) {
+      const videoId = extractYouTubeVideoId(url);
+      filename = `YouTube-${videoId || "Video"}.mp4`;
     } else {
-      extension = filename.split(".").pop()?.toLowerCase() || "";
+      // Try to get filename from URL path
+      const pathParts = urlObj.pathname.split("/");
+      const lastPart = pathParts[pathParts.length - 1];
+      if (lastPart && lastPart.includes(".")) {
+        filename = lastPart.split("?")[0];
+        extension = filename.split(".").pop()?.toLowerCase() || "mp4";
+      } else {
+        filename = `${urlObj.hostname.replace(
+          /[^a-zA-Z0-9]/g,
+          "-"
+        )}-download.mp4`;
+      }
     }
 
-    // Simulate HEAD request to get file info
-    const simulatedResponse = {
-      "content-length": isWebContent
-        ? Math.floor(Math.random() * 50 * 1024 * 1024).toString() // Web content: up to 50MB
-        : Math.floor(Math.random() * MAX_FILE_SIZE).toString(),
-      "content-type": getContentType(extension),
-      "last-modified": new Date(
-        Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000
-      ).toISOString(),
-    };
+    // Get metadata from API with shorter timeout and better error handling
+    let fileSize =
+      Math.floor(Math.random() * 100 * 1024 * 1024) + 20 * 1024 * 1024;
+    let contentType = getContentType(extension);
+    let lastModified = new Date().toISOString();
+    let isRealVideo = false;
 
-    const fileSize = Number.parseInt(simulatedResponse["content-length"]);
+    try {
+      console.log("📡 Getting metadata from API");
 
-    // Don't block based on file type anymore, just warn
-    if (extension && !ALLOWED_EXTENSIONS.includes(extension) && !isWebContent) {
-      console.warn(
-        `File type ${extension} is not in allowed list, but proceeding with warning`
-      );
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // Reduced to 5 seconds
+
+      const response = await fetch("/api/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, metadataOnly: true }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log("📊 API metadata response:", data);
+
+        if (data.success) {
+          if (data.size) fileSize = data.size;
+          if (data.contentType) contentType = data.contentType;
+          if (data.lastModified) lastModified = data.lastModified;
+          if (data.title) {
+            filename = `${data.title.replace(
+              /[^a-zA-Z0-9\s\u0600-\u06FF]/g,
+              "-"
+            )}.${extension}`;
+          }
+          isRealVideo = data.isRealVideo === true;
+        }
+      } else if (response.status === 429 || response.status === 503) {
+        // YouTube is blocked, but we can still show file info
+        console.warn("⚠️ YouTube blocked, using default metadata");
+        isRealVideo = false; // Mark as not real video since it's blocked
+      } else {
+        console.warn("⚠️ API returned error:", response.status);
+      }
+    } catch (error: any) {
+      console.warn("⚠️ Could not fetch metadata:", error.name, error.message);
+      // Don't throw error, just use defaults
     }
 
-    return {
+    const result = {
       name: filename,
       size: fileSize,
-      type: simulatedResponse["content-type"],
+      type: contentType,
       extension: extension,
       url: url,
       isSecure: urlObj.protocol === "https:",
-      lastModified: simulatedResponse["last-modified"],
+      lastModified: lastModified,
       isWebContent: isWebContent,
+      isRealVideo: isRealVideo,
     };
+
+    console.log("✅ File info result:", result);
+    return result;
   } catch (error) {
-    console.error("File detection error:", error);
-    // Don't return null, return a generic web content info
-    try {
-      const urlObj = new URL(url);
-      return {
-        name: `Web-Content-${urlObj.hostname}.html`,
-        size: Math.floor(Math.random() * 10 * 1024 * 1024), // Random size up to 10MB
-        type: "text/html",
-        extension: "html",
-        url: url,
-        isSecure: urlObj.protocol === "https:",
-        isWebContent: true,
-      };
-    } catch {
-      return null;
-    }
+    console.error("❌ File detection error:", error);
+    throw error;
   }
+}
+
+function extractYouTubeVideoId(url: string): string | null {
+  const regex = /(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\n?#]+)/;
+  const match = url.match(regex);
+  return match ? match[1] : null;
 }
 
 export async function downloadFile(
@@ -331,78 +183,223 @@ export async function downloadFile(
   filename: string,
   onProgress: (progress: number) => void
 ): Promise<void> {
-  return new Promise((resolve, reject) => {
-    // Simulate download progress
-    let progress = 0;
-    const interval = setInterval(() => {
-      progress += Math.random() * 15;
-      if (progress >= 100) {
-        progress = 100;
-        clearInterval(interval);
-        onProgress(progress);
+  try {
+    console.log("🚀 Starting download:", { url, filename });
 
-        // Simulate actual download
-        setTimeout(() => {
-          try {
-            // For web content, open in new tab
-            if (
-              filename.includes("Web-Content") ||
-              filename.includes("YouTube") ||
-              filename.includes("Vimeo")
-            ) {
-              window.open(url, "_blank");
-            } else {
-              // Create a temporary download link
-              const link = document.createElement("a");
-              link.href = url;
-              link.download = filename;
-              link.target = "_blank";
-              document.body.appendChild(link);
-              link.click();
-              document.body.removeChild(link);
-            }
-            resolve();
-          } catch (error) {
-            reject(error);
-          }
-        }, 500);
-      } else {
-        onProgress(Math.min(progress, 100));
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minutes
+
+    onProgress(5);
+
+    const response = await fetch("/api/download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errorData = await response
+        .json()
+        .catch(() => ({ error: "Unknown API error" }));
+
+      // Handle YouTube bot protection specifically
+      if (response.status === 429 || response.status === 503) {
+        if (errorData.isYouTubeBlocked) {
+          throw new Error(
+            "یوتیوب محافظت ضد ربات فعال کرده است.\n\n" +
+              "لطفاً از این روش‌های جایگزین استفاده کنید:\n" +
+              "• SaveFrom.net\n" +
+              "• Y2Mate.com\n" +
+              "• SnapInsta.app\n\n" +
+              "یا چند دقیقه دیگر دوباره تلاش کنید."
+          );
+        }
       }
-    }, 200);
 
-    // Reduce failure rate
+      throw new Error(errorData.error || `Server error: ${response.status}`);
+    }
+
+    console.log("📥 Response received");
+    console.log("Content-Type:", response.headers.get("content-type"));
+    console.log("Content-Length:", response.headers.get("content-length"));
+
+    const contentType = response.headers.get("content-type") || "";
+    const contentLength = response.headers.get("content-length");
+    const total = contentLength ? Number.parseInt(contentLength) : 0;
+
+    // Only accept video/audio/image content - reject text
+    if (contentType.includes("text/")) {
+      throw new Error(
+        "سرور راهنمای متنی ارسال کرد به جای فایل واقعی - لینک پشتیبانی نمی‌شود"
+      );
+    }
+
+    if (
+      !contentType.includes("video/") &&
+      !contentType.includes("audio/") &&
+      !contentType.includes("image/")
+    ) {
+      console.warn("⚠️ Unexpected content type:", contentType);
+    }
+
+    console.log(
+      `📋 Content type: ${contentType} - ${
+        contentType.includes("video/") ? "Video" : "Other"
+      }`
+    );
+
+    if (!response.body) {
+      throw new Error("No response body received");
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+
+    onProgress(10);
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          console.log("✅ Stream reading completed");
+          break;
+        }
+
+        if (!value || value.length === 0) {
+          console.warn("⚠️ Received empty chunk");
+          continue;
+        }
+
+        chunks.push(value);
+        received += value.length;
+
+        // Calculate progress
+        let progressPercent = 10;
+        if (total > 0) {
+          progressPercent = 10 + (received / total) * 85;
+        } else {
+          // Estimate for unknown size
+          const estimatedTotal = 50 * 1024 * 1024; // 50MB
+          progressPercent = 10 + Math.min((received / estimatedTotal) * 80, 80);
+        }
+
+        onProgress(Math.min(progressPercent, 95));
+
+        // Log progress every MB
+        if (received % (1024 * 1024) < value.length) {
+          console.log(
+            `📊 Downloaded: ${(received / 1024 / 1024).toFixed(1)}MB`
+          );
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    if (received === 0) {
+      throw new Error("No data received - the download failed");
+    }
+
+    console.log(
+      `✅ Total received: ${(received / 1024 / 1024).toFixed(
+        1
+      )}MB (${received} bytes)`
+    );
+
+    // Validate minimum file size for videos
+    if (contentType.includes("video/") && received < 100000) {
+      throw new Error(
+        `ویدیو خیلی کوچک است (${received} bytes) - احتمالاً خطا یا فایل ناقص`
+      );
+    }
+
+    onProgress(98);
+
+    // Combine chunks
+    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const allChunks = new Uint8Array(totalLength);
+    let position = 0;
+
+    for (const chunk of chunks) {
+      allChunks.set(chunk, position);
+      position += chunk.length;
+    }
+
+    console.log(`📦 Combined chunks: ${allChunks.length} bytes`);
+
+    // Create blob with correct type
+    const blob = new Blob([allChunks], { type: contentType });
+    console.log(`💾 Created blob: ${blob.size} bytes, type: ${blob.type}`);
+
+    const downloadUrl = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = filename;
+    link.style.display = "none";
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
     setTimeout(() => {
-      if (Math.random() > 0.95) {
-        // Only 5% chance of failure
-        clearInterval(interval);
-        reject(new Error("Download failed"));
+      URL.revokeObjectURL(downloadUrl);
+      console.log("🧹 Cleaned up blob URL");
+    }, 1000);
+
+    onProgress(100);
+    console.log("🎉 File download completed successfully!");
+    console.log(`Final file size: ${(blob.size / 1024 / 1024).toFixed(2)}MB`);
+  } catch (error) {
+    console.error("💥 Download failed:", error);
+
+    let errorMessage = "خطای ناشناخته";
+    if (error instanceof Error) {
+      if (error.name === "AbortError") {
+        errorMessage = "زمان انتظار تمام شد - فایل خیلی بزرگ است";
+      } else if (error.message.includes("Failed to fetch")) {
+        errorMessage = "خطا در اتصال - اتصال اینترنت را بررسی کنید";
+      } else if (error.message.includes("یوتیوب محافظت")) {
+        errorMessage = error.message; // Use the full YouTube protection message
+      } else if (error.message.includes("راهنمای متنی")) {
+        errorMessage =
+          "این لینک پشتیبانی نمی‌شود - فقط یوتیوب و لینک‌های مستقیم فایل";
+      } else {
+        errorMessage = error.message;
       }
-    }, 3000);
-  });
+    }
+
+    throw new Error(`دانلود ناموفق: ${errorMessage}`);
+  }
 }
 
 function getContentType(extension: string): string {
   const mimeTypes: Record<string, string> = {
-    pdf: "application/pdf",
-    doc: "application/msword",
-    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    txt: "text/plain",
-    html: "text/html",
-    htm: "text/html",
+    mp4: "video/mp4",
+    avi: "video/x-msvideo",
+    mov: "video/quicktime",
+    wmv: "video/x-ms-wmv",
+    flv: "video/x-flv",
+    webm: "video/webm",
+    mkv: "video/x-matroska",
+    mp3: "audio/mpeg",
+    wav: "audio/wav",
+    flac: "audio/flac",
+    aac: "audio/aac",
+    ogg: "audio/ogg",
     jpg: "image/jpeg",
     jpeg: "image/jpeg",
     png: "image/png",
     gif: "image/gif",
-    mp4: "video/mp4",
-    avi: "video/x-msvideo",
-    mov: "video/quicktime",
-    mp3: "audio/mpeg",
-    wav: "audio/wav",
+    webp: "image/webp",
+    pdf: "application/pdf",
     zip: "application/zip",
     rar: "application/x-rar-compressed",
-    exe: "application/x-msdownload",
-    apk: "application/vnd.android.package-archive",
   };
 
   return mimeTypes[extension] || "application/octet-stream";
