@@ -1,6 +1,5 @@
 "use client";
 
-import { formatFileSize } from "@/app/func/fileUtils";
 import {
   FileText,
   ImageIcon,
@@ -10,7 +9,10 @@ import {
   Eye,
   Calendar,
   HardDrive,
+  Globe,
+  Youtube,
 } from "lucide-react";
+import { formatFileSize } from "../../func/fileUtils";
 
 interface FileData {
   name: string;
@@ -20,6 +22,7 @@ interface FileData {
   url: string;
   isSecure: boolean;
   lastModified?: string;
+  isWebContent?: boolean;
 }
 
 interface FileInfoProps {
@@ -33,8 +36,15 @@ export function FileInfo({
   onPreview,
   className = "",
 }: FileInfoProps) {
-  const getFileIcon = (extension: string) => {
+  const getFileIcon = (extension: string, isWebContent?: boolean) => {
     const iconClass = "w-8 h-8";
+
+    if (isWebContent) {
+      if (fileData.name.includes("YouTube")) {
+        return <Youtube className={`${iconClass} text-red-400`} />;
+      }
+      return <Globe className={`${iconClass} text-blue-400`} />;
+    }
 
     switch (extension.toLowerCase()) {
       case "pdf":
@@ -60,6 +70,9 @@ export function FileInfo({
       case "rar":
       case "7z":
         return <Archive className={`${iconClass} text-amber-400`} />;
+      case "html":
+      case "htm":
+        return <Globe className={`${iconClass} text-blue-400`} />;
       default:
         return <FileText className={`${iconClass} text-gray-400`} />;
     }
@@ -78,13 +91,23 @@ export function FileInfo({
     }).format(date);
   };
 
+  const getContentTypeLabel = () => {
+    if (fileData.isWebContent) {
+      if (fileData.name.includes("YouTube")) return "ویدیو یوتیوب";
+      if (fileData.name.includes("Vimeo")) return "ویدیو ویمیو";
+      if (fileData.name.includes("Twitter")) return "محتوای توییتر";
+      return "محتوای وب";
+    }
+    return fileData.extension.toUpperCase();
+  };
+
   return (
     <div
       className={`p-5 bg-gradient-to-r from-green-500/10 to-emerald-500/10 border border-green-500/30 rounded-2xl animate-in slide-in-from-top duration-300 ${className}`}
     >
       <div className="flex items-start gap-4">
         <div className="w-16 h-16 bg-green-500/20 rounded-2xl flex items-center justify-center flex-shrink-0">
-          {getFileIcon(fileData.extension)}
+          {getFileIcon(fileData.extension, fileData.isWebContent)}
         </div>
 
         <div className="flex-1 min-w-0">
@@ -100,7 +123,7 @@ export function FileInfo({
                 </div>
                 <div className="flex items-center gap-1">
                   <span className="w-2 h-2 bg-green-400 rounded-full"></span>
-                  <span>{fileData.extension.toUpperCase()}</span>
+                  <span>{getContentTypeLabel()}</span>
                 </div>
               </div>
             </div>
@@ -114,10 +137,12 @@ export function FileInfo({
           </div>
 
           <div className="grid grid-cols-1 gap-2 text-xs text-gray-400">
-            <div className="flex items-center gap-2">
-              <Calendar className="w-3 h-3" />
-              <span>آخرین تغییر: {formatDate(fileData.lastModified)}</span>
-            </div>
+            {!fileData.isWebContent && fileData.lastModified && (
+              <div className="flex items-center gap-2">
+                <Calendar className="w-3 h-3" />
+                <span>آخرین تغییر: {formatDate(fileData.lastModified)}</span>
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <span
                 className={`w-2 h-2 rounded-full ${
@@ -130,12 +155,24 @@ export function FileInfo({
                   : "اتصال غیرامن (HTTP)"}
               </span>
             </div>
+            {fileData.isWebContent && (
+              <div className="flex items-center gap-2">
+                <Globe className="w-3 h-3" />
+                <span>
+                  محتوای آنلاین - ممکن است نیاز به ابزار خاص داشته باشد
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="mt-3 pt-3 border-t border-green-500/20">
             <div className="flex items-center gap-2 text-green-400 text-sm">
               <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-              <span>فایل تأیید شده و آماده دانلود</span>
+              <span>
+                {fileData.isWebContent
+                  ? "محتوا شناسایی شده و آماده دسترسی"
+                  : "فایل تأیید شده و آماده دانلود"}
+              </span>
             </div>
           </div>
         </div>

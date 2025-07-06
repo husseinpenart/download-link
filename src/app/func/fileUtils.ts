@@ -1,6 +1,7 @@
 interface ValidationResult {
   isValid: boolean;
   errors: string[];
+  warnings: string[];
 }
 
 interface FileInfo {
@@ -11,6 +12,7 @@ interface FileInfo {
   url: string;
   isSecure: boolean;
   lastModified?: string;
+  isWebContent?: boolean;
 }
 
 interface SecurityResult {
@@ -18,75 +20,109 @@ interface SecurityResult {
   threats: string[];
   warnings: string[];
   riskLevel: "low" | "medium" | "high";
+  canProceed: boolean;
 }
 
-// Allowed file extensions
+// Allowed file extensions (expanded list)
 const ALLOWED_EXTENSIONS = [
   "pdf",
   "doc",
   "docx",
   "txt",
   "rtf",
+  "xls",
+  "xlsx",
+  "ppt",
+  "pptx",
   "jpg",
   "jpeg",
   "png",
   "gif",
   "webp",
   "svg",
+  "bmp",
+  "tiff",
   "mp4",
   "avi",
   "mov",
   "wmv",
   "flv",
+  "mkv",
+  "webm",
+  "m4v",
   "mp3",
   "wav",
   "flac",
   "aac",
+  "ogg",
+  "wma",
   "zip",
   "rar",
   "7z",
   "tar",
   "gz",
+  "bz2",
+  "exe",
+  "msi",
+  "dmg",
+  "deb",
+  "rpm",
+  "apk",
+  "html",
+  "htm",
+  "css",
+  "js",
+  "json",
+  "xml",
 ];
 
-// Blocked domains (example malicious domains)
-const BLOCKED_DOMAINS = [
+// High-risk domains that should show strong warnings
+const HIGH_RISK_DOMAINS = [
   "malware-site.com",
   "phishing-example.net",
   "suspicious-downloads.org",
 ];
 
-// Maximum file size (5GB in bytes)
-const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024;
+// Maximum file size (10GB in bytes) - increased limit
+const MAX_FILE_SIZE = 10 * 1024 * 1024 * 1024;
 
 export function validateUrl(url: string): ValidationResult {
   const errors: string[] = [];
+  const warnings: string[] = [];
 
   // Basic URL format validation
   try {
     const urlObj = new URL(url);
 
-    // Check protocol
-    if (!["http:", "https:"].includes(urlObj.protocol)) {
-      errors.push("فقط پروتکل HTTP و HTTPS مجاز است");
+    // Check protocol - only block dangerous protocols
+    if (!["http:", "https:", "ftp:"].includes(urlObj.protocol)) {
+      errors.push("پروتکل غیرمجاز - فقط HTTP، HTTPS و FTP پشتیبانی می‌شود");
     }
 
-    // Check for blocked domains
-    if (BLOCKED_DOMAINS.some((domain) => urlObj.hostname.includes(domain))) {
-      errors.push("این دامنه در لیست سیاه قرار دارد");
+    // Check for high-risk domains (warning, not blocking)
+    if (HIGH_RISK_DOMAINS.some((domain) => urlObj.hostname.includes(domain))) {
+      warnings.push("این دامنه در لیست پرخطر قرار دارد");
     }
 
-    // Check for suspicious patterns
+    // Warn about shortened URLs but don't block
     if (
       urlObj.hostname.includes("bit.ly") ||
-      urlObj.hostname.includes("tinyurl")
+      urlObj.hostname.includes("tinyurl") ||
+      urlObj.hostname.includes("t.co")
     ) {
-      errors.push("لینک‌های کوتاه شده مجاز نیستند");
+      warnings.push("لینک کوتاه شده - ممکن است به آدرس نامعلومی منتقل شود");
     }
 
-    // Check for IP addresses (potential security risk)
+    // Warn about IP addresses but don't block
     if (/^\d+\.\d+\.\d+\.\d+/.test(urlObj.hostname)) {
-      errors.push("استفاده از آدرس IP به جای دامنه مجاز نیست");
+      warnings.push(
+        "استفاده از آدرس IP - ممکن است نشان‌دهنده محتوای مشکوک باشد"
+      );
+    }
+
+    // Warn about non-HTTPS
+    if (urlObj.protocol === "http:") {
+      warnings.push("اتصال غیرامن (HTTP) - اطلاعات شما رمزگذاری نمی‌شود");
     }
   } catch (error) {
     errors.push("فرمت لینک نامعتبر است");
@@ -95,6 +131,7 @@ export function validateUrl(url: string): ValidationResult {
   return {
     isValid: errors.length === 0,
     errors,
+    warnings,
   };
 }
 
@@ -109,43 +146,79 @@ export async function checkUrlSecurity(url: string): Promise<SecurityResult> {
   try {
     const urlObj = new URL(url);
 
-    // Check HTTPS
+    // Check HTTPS - major factor for risk level
     if (urlObj.protocol !== "https:") {
-      warnings.push("اتصال امن (HTTPS) استفاده نمی‌شود");
+      warnings.push("اتصال غیرامن (HTTP) - خطر رهگیری اطلاعات");
       riskLevel = "medium";
     }
 
-    // Simulate malware check
-    const suspiciousPatterns = [
-      "download-now",
-      "free-crack",
-      "keygen",
-      "malware",
-      "virus",
-    ];
+    // Check for suspicious patterns (warnings, not threats)
+    const suspiciousPatterns = ["download-now", "free-crack", "keygen"];
+    const highRiskPatterns = ["malware", "virus", "trojan"];
 
     if (
+      highRiskPatterns.some((pattern) => url.toLowerCase().includes(pattern))
+    ) {
+      threats.push("الگوی خطرناک در لینک شناسایی شد");
+      riskLevel = "high";
+    } else if (
       suspiciousPatterns.some((pattern) => url.toLowerCase().includes(pattern))
     ) {
-      threats.push("الگوی مشکوک در لینک شناسایی شد");
-      riskLevel = "high";
-    }
-
-    // Check file extension in URL
-    const pathExtension = urlObj.pathname.split(".").pop()?.toLowerCase();
-    if (pathExtension && !ALLOWED_EXTENSIONS.includes(pathExtension)) {
-      warnings.push(`فرمت فایل ${pathExtension} در لیست مجاز نیست`);
+      warnings.push("الگوی مشکوک در لینک شناسایی شد");
       riskLevel = riskLevel === "high" ? "high" : "medium";
     }
 
-    // Simulate reputation check
+    // Check for known video/content platforms
+    const contentPlatforms = [
+      "youtube.com",
+      "youtu.be",
+      "vimeo.com",
+      "dailymotion.com",
+      "twitch.tv",
+    ];
+    if (
+      contentPlatforms.some((platform) => urlObj.hostname.includes(platform))
+    ) {
+      warnings.push(
+        "پلتفرم محتوا - ممکن است نیاز به ابزار خاص برای دانلود داشته باشد"
+      );
+      riskLevel = "low"; // Content platforms are generally safe
+    }
+
+    // Check for social media platforms
+    const socialPlatforms = [
+      "facebook.com",
+      "twitter.com",
+      "instagram.com",
+      "linkedin.com",
+    ];
+    if (
+      socialPlatforms.some((platform) => urlObj.hostname.includes(platform))
+    ) {
+      warnings.push("پلتفرم اجتماعی - ممکن است محتوا قابل دانلود مستقیم نباشد");
+    }
+
+    // Simulate reputation check - less aggressive
     const randomRisk = Math.random();
-    if (randomRisk > 0.9) {
-      threats.push("دامنه دارای سابقه امنیتی مشکوک است");
+    if (randomRisk > 0.95) {
+      threats.push("دامنه دارای سابقه امنیتی بد است");
       riskLevel = "high";
-    } else if (randomRisk > 0.7) {
+    } else if (randomRisk > 0.85) {
       warnings.push("دامنه جدید یا کم‌شناخته است");
       riskLevel = riskLevel === "high" ? "high" : "medium";
+    }
+
+    // Check for file hosting services
+    const fileHosting = [
+      "drive.google.com",
+      "dropbox.com",
+      "onedrive.com",
+      "mega.nz",
+    ];
+    if (fileHosting.some((service) => urlObj.hostname.includes(service))) {
+      warnings.push(
+        "سرویس میزبانی فایل - ممکن است نیاز به احراز هویت داشته باشد"
+      );
     }
   } catch (error) {
     threats.push("خطا در بررسی امنیتی لینک");
@@ -153,10 +226,11 @@ export async function checkUrlSecurity(url: string): Promise<SecurityResult> {
   }
 
   return {
-    isSafe: threats.length === 0 && riskLevel !== "high",
+    isSafe: threats.length === 0,
     threats,
     warnings,
     riskLevel,
+    canProceed: true, // Always allow proceeding with user confirmation
   };
 }
 
@@ -167,29 +241,59 @@ export async function detectFileInfo(url: string): Promise<FileInfo | null> {
   try {
     const urlObj = new URL(url);
     const pathname = urlObj.pathname;
-    const filename = pathname.split("/").pop() || "unknown-file";
-    const extension = filename.split(".").pop()?.toLowerCase() || "";
+    let filename = pathname.split("/").pop() || "unknown-file";
+    let extension = "";
+    let isWebContent = false;
+
+    // Handle URLs without clear file extensions
+    if (!filename.includes(".") || filename.length < 3) {
+      // Check if it's a known content platform
+      if (
+        urlObj.hostname.includes("youtube.com") ||
+        urlObj.hostname.includes("youtu.be")
+      ) {
+        filename = "YouTube-Video.mp4";
+        extension = "mp4";
+        isWebContent = true;
+      } else if (urlObj.hostname.includes("vimeo.com")) {
+        filename = "Vimeo-Video.mp4";
+        extension = "mp4";
+        isWebContent = true;
+      } else if (
+        urlObj.hostname.includes("twitter.com") ||
+        urlObj.hostname.includes("x.com")
+      ) {
+        filename = "Twitter-Content.html";
+        extension = "html";
+        isWebContent = true;
+      } else {
+        // Generic web content
+        filename = `Web-Content-${Date.now()}.html`;
+        extension = "html";
+        isWebContent = true;
+      }
+    } else {
+      extension = filename.split(".").pop()?.toLowerCase() || "";
+    }
 
     // Simulate HEAD request to get file info
-    // In real implementation, you would make an actual HTTP HEAD request
     const simulatedResponse = {
-      "content-length": Math.floor(Math.random() * MAX_FILE_SIZE).toString(),
+      "content-length": isWebContent
+        ? Math.floor(Math.random() * 50 * 1024 * 1024).toString() // Web content: up to 50MB
+        : Math.floor(Math.random() * MAX_FILE_SIZE).toString(),
       "content-type": getContentType(extension),
       "last-modified": new Date(
         Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000
       ).toISOString(),
     };
 
-    const fileSize = parseInt(simulatedResponse["content-length"]);
+    const fileSize = Number.parseInt(simulatedResponse["content-length"]);
 
-    // Check file size
-    if (fileSize > MAX_FILE_SIZE) {
-      throw new Error("File size exceeds maximum limit");
-    }
-
-    // Check if extension is allowed
-    if (extension && !ALLOWED_EXTENSIONS.includes(extension)) {
-      throw new Error("File type not allowed");
+    // Don't block based on file type anymore, just warn
+    if (extension && !ALLOWED_EXTENSIONS.includes(extension) && !isWebContent) {
+      console.warn(
+        `File type ${extension} is not in allowed list, but proceeding with warning`
+      );
     }
 
     return {
@@ -200,10 +304,25 @@ export async function detectFileInfo(url: string): Promise<FileInfo | null> {
       url: url,
       isSecure: urlObj.protocol === "https:",
       lastModified: simulatedResponse["last-modified"],
+      isWebContent: isWebContent,
     };
   } catch (error) {
     console.error("File detection error:", error);
-    return null;
+    // Don't return null, return a generic web content info
+    try {
+      const urlObj = new URL(url);
+      return {
+        name: `Web-Content-${urlObj.hostname}.html`,
+        size: Math.floor(Math.random() * 10 * 1024 * 1024), // Random size up to 10MB
+        type: "text/html",
+        extension: "html",
+        url: url,
+        isSecure: urlObj.protocol === "https:",
+        isWebContent: true,
+      };
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -224,24 +343,38 @@ export async function downloadFile(
 
         // Simulate actual download
         setTimeout(() => {
-          // Create a temporary download link
-          const link = document.createElement("a");
-          link.href = url;
-          link.download = filename;
-          link.target = "_blank";
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          resolve();
+          try {
+            // For web content, open in new tab
+            if (
+              filename.includes("Web-Content") ||
+              filename.includes("YouTube") ||
+              filename.includes("Vimeo")
+            ) {
+              window.open(url, "_blank");
+            } else {
+              // Create a temporary download link
+              const link = document.createElement("a");
+              link.href = url;
+              link.download = filename;
+              link.target = "_blank";
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+            }
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
         }, 500);
       } else {
         onProgress(Math.min(progress, 100));
       }
     }, 200);
 
-    // Simulate potential download failure
+    // Reduce failure rate
     setTimeout(() => {
-      if (Math.random() > 0.9) {
+      if (Math.random() > 0.95) {
+        // Only 5% chance of failure
         clearInterval(interval);
         reject(new Error("Download failed"));
       }
@@ -255,14 +388,21 @@ function getContentType(extension: string): string {
     doc: "application/msword",
     docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     txt: "text/plain",
+    html: "text/html",
+    htm: "text/html",
     jpg: "image/jpeg",
     jpeg: "image/jpeg",
     png: "image/png",
     gif: "image/gif",
     mp4: "video/mp4",
+    avi: "video/x-msvideo",
+    mov: "video/quicktime",
     mp3: "audio/mpeg",
+    wav: "audio/wav",
     zip: "application/zip",
     rar: "application/x-rar-compressed",
+    exe: "application/x-msdownload",
+    apk: "application/vnd.android.package-archive",
   };
 
   return mimeTypes[extension] || "application/octet-stream";
@@ -275,5 +415,7 @@ export function formatFileSize(bytes: number): string {
   const sizes = ["بایت", "کیلوبایت", "مگابایت", "گیگابایت"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
 
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+  return (
+    Number.parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
+  );
 }

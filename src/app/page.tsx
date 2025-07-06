@@ -1,8 +1,19 @@
 "use client";
 
+import type React from "react";
+
 import { useState, useCallback } from "react";
 import Inputs from "./components/global/Inputs";
-
+import {
+  validateUrl,
+  detectFileInfo,
+  checkUrlSecurity,
+  downloadFile,
+} from "./func/fileUtils";
+import { SecurityCheck } from "./components/global/SecurityCheck";
+import { FileInfo } from "./components/global/FileInfo";
+import { DownloadProgress } from "./components/global/DownloadProgress";
+import { RiskConfirmationModal } from "./components/global/RiskConfirmationModal";
 import {
   Download,
   Link,
@@ -17,10 +28,6 @@ import {
   AlertTriangle,
   Lock,
 } from "lucide-react";
-import { checkUrlSecurity, detectFileInfo, downloadFile, validateUrl } from "./func/fileUtils";
-import { SecurityCheck } from "./components/global/SecurityCheck";
-import { FileInfo } from "./components/global/FileInfo";
-import { DownloadProgress } from "./components/global/DownloadProgress";
 
 interface FileData {
   name: string;
@@ -30,6 +37,7 @@ interface FileData {
   url: string;
   isSecure: boolean;
   lastModified?: string;
+  isWebContent?: boolean;
 }
 
 interface SecurityResult {
@@ -37,6 +45,7 @@ interface SecurityResult {
   threats: string[];
   warnings: string[];
   riskLevel: "low" | "medium" | "high";
+  canProceed: boolean;
 }
 
 export default function Home() {
@@ -49,9 +58,12 @@ export default function Home() {
     null
   );
   const [errors, setErrors] = useState<string[]>([]);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [downloadAttempts, setDownloadAttempts] = useState(0);
+  const [showRiskModal, setShowRiskModal] = useState(false);
+  const [userAcceptedRisk, setUserAcceptedRisk] = useState(false);
 
   const validateAndDetectFile = useCallback(async (inputUrl: string) => {
     if (!inputUrl.trim()) {
@@ -61,39 +73,41 @@ export default function Home() {
 
     setIsValidating(true);
     setErrors([]);
+    setWarnings([]);
     setFileData(null);
     setSecurityResult(null);
+    setUserAcceptedRisk(false);
 
     try {
       // Step 1: URL Validation
       const urlValidation = validateUrl(inputUrl);
       if (!urlValidation.isValid) {
         setErrors(urlValidation.errors);
+        setWarnings(urlValidation.warnings);
         return;
+      }
+
+      // Set warnings from validation
+      if (urlValidation.warnings.length > 0) {
+        setWarnings(urlValidation.warnings);
       }
 
       // Step 2: Security Check
       const securityCheck = await checkUrlSecurity(inputUrl);
       setSecurityResult(securityCheck);
 
-      if (!securityCheck.isSafe) {
-        setErrors([
-          "این لینک امن نیست و ممکن است حاوی محتوای مخرب باشد",
-          ...securityCheck.threats,
-        ]);
-        return;
-      }
-
-      // Step 3: File Detection
+      // Step 3: File Detection - Always try to detect
       const fileInfo = await detectFileInfo(inputUrl);
-      if (!fileInfo) {
-        setErrors(["فایل قابل دسترسی نیست یا لینک نامعتبر است"]);
-        return;
+      if (fileInfo) {
+        setFileData(fileInfo);
+      } else {
+        setWarnings((prev) => [
+          ...prev,
+          "نتوانستیم اطلاعات فایل را شناسایی کنیم، اما می‌توانید ادامه دهید",
+        ]);
       }
-
-      setFileData(fileInfo);
     } catch (error) {
-      setErrors(["خطا در پردازش لینک. لطفاً مجدداً تلاش کنید"]);
+      setWarnings(["خطا در پردازش لینک، اما می‌توانید دانلود را امتحان کنید"]);
       console.error("File detection error:", error);
     } finally {
       setIsValidating(false);
@@ -106,9 +120,9 @@ export default function Home() {
 
     // Real-time validation for basic URL format
     if (newUrl && !newUrl.match(/^https?:\/\/.+/)) {
-      setErrors(["لینک باید با http:// یا https:// شروع شود"]);
+      setWarnings(["لینک باید با http:// یا https:// شروع شود"]);
     } else {
-      setErrors([]);
+      setWarnings([]);
     }
   };
 
@@ -117,7 +131,18 @@ export default function Home() {
   };
 
   const handleDownload = async () => {
-    if (!fileData || downloadAttempts >= 3) {
+    // Check if user needs to confirm risks
+    if (
+      securityResult &&
+      (securityResult.riskLevel === "high" ||
+        securityResult.threats.length > 0) &&
+      !userAcceptedRisk
+    ) {
+      setShowRiskModal(true);
+      return;
+    }
+
+    if (downloadAttempts >= 5) {
       setErrors(["حداکثر تعداد تلاش برای دانلود به پایان رسیده است"]);
       return;
     }
@@ -127,7 +152,10 @@ export default function Home() {
     setDownloadAttempts((prev) => prev + 1);
 
     try {
-      await downloadFile(fileData.url, fileData.name, (progress) => {
+      const downloadUrl = url;
+      const fileName = fileData?.name || `download-${Date.now()}`;
+
+      await downloadFile(downloadUrl, fileName, (progress) => {
         setDownloadProgress(progress);
       });
     } catch (error) {
@@ -136,6 +164,12 @@ export default function Home() {
     } finally {
       setIsDownloading(false);
     }
+  };
+
+  const handleRiskAccepted = () => {
+    setUserAcceptedRisk(true);
+    setShowRiskModal(false);
+    handleDownload();
   };
 
   const handleCopy = async () => {
@@ -148,18 +182,11 @@ export default function Home() {
     }
   };
 
-  const getRiskColor = (level: string) => {
-    switch (level) {
-      case "low":
-        return "text-green-400 border-green-500/30 bg-green-500/10";
-      case "medium":
-        return "text-yellow-400 border-yellow-500/30 bg-yellow-500/10";
-      case "high":
-        return "text-red-400 border-red-500/30 bg-red-500/10";
-      default:
-        return "text-gray-400 border-gray-500/30 bg-gray-500/10";
-    }
-  };
+  const canDownload =
+    url.trim() &&
+    (fileData ||
+      userAcceptedRisk ||
+      (securityResult && securityResult.canProceed));
 
   return (
     <div
@@ -192,7 +219,7 @@ export default function Home() {
             خوش آمدید
           </h1>
           <p className="text-gray-300 text-base mb-8">
-            لینک خود را وارد کرده و فایل را با امنیت کامل دانلود نمائید
+            هر لینکی را وارد کنید - ویدیو، فایل، محتوا - همه چیز قابل دانلود است
           </p>
 
           {/* Feature Pills */}
@@ -203,11 +230,11 @@ export default function Home() {
             </div>
             <div className="flex items-center gap-2 bg-white/10 backdrop-blur-sm rounded-full px-3 py-1 text-xs text-gray-300">
               <Shield className="w-3 h-3 text-green-400" />
-              امن و مطمئن
+              هشدار امنیتی
             </div>
             <div className="flex items-center gap-2 bg-white/10 backdrop-blur-sm rounded-full px-3 py-1 text-xs text-gray-300">
-              <Lock className="w-3 h-3 text-blue-400" />
-              رمزگذاری SSL
+              <Eye className="w-3 h-3 text-blue-400" />
+              همه فرمت‌ها
             </div>
           </div>
         </div>
@@ -222,17 +249,19 @@ export default function Home() {
             {/* Input Section */}
             <div className="mb-6">
               <label className="block text-white text-sm font-medium mb-4 text-right flex items-center justify-end gap-2">
-                <span>لینک فایل مورد نظر</span>
+                <span>لینک مورد نظر (YouTube، وب‌سایت، فایل و ...)</span>
                 <Link className="w-4 h-4 text-purple-400" />
               </label>
               <div className="relative group">
                 <Inputs
                   value={url}
                   onChange={handleUrlChange}
-                  placeholder="https://example.com/file.zip"
+                  placeholder="https://youtube.com/watch?v=... یا هر لینک دیگری"
                   className={`w-full h-14 rounded-2xl p-4 pr-14 border-2 ${
                     errors.length > 0
                       ? "border-red-500/50 focus:border-red-500"
+                      : warnings.length > 0
+                      ? "border-yellow-500/50 focus:border-yellow-500"
                       : "border-white/20 focus:border-purple-400"
                   } bg-white/5 text-white placeholder-gray-400 focus:ring-4 focus:ring-purple-400/20 focus:outline-none transition-all duration-300 group-hover:border-white/30`}
                 />
@@ -254,7 +283,7 @@ export default function Home() {
                 ) : (
                   <>
                     <Eye className="w-4 h-4" />
-                    بررسی و شناسایی فایل
+                    بررسی و آماده‌سازی دانلود
                   </>
                 )}
               </button>
@@ -282,6 +311,29 @@ export default function Home() {
               </div>
             )}
 
+            {/* Warning Messages */}
+            {warnings.length > 0 && errors.length === 0 && (
+              <div className="mb-6 p-5 bg-gradient-to-r from-yellow-500/10 to-orange-500/10 border border-yellow-500/30 rounded-2xl animate-in slide-in-from-top duration-300">
+                <div className="flex items-start gap-4">
+                  <AlertTriangle className="w-6 h-6 text-yellow-400 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-yellow-400 font-medium mb-2">هشدارها:</p>
+                    <ul className="text-gray-300 text-sm space-y-1">
+                      {warnings.map((warning, index) => (
+                        <li key={index} className="flex items-start gap-2">
+                          <span className="text-yellow-400 mt-1">•</span>
+                          <span>{warning}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="text-xs text-gray-400 mt-2">
+                      می‌توانید با آگاهی از خطرات ادامه دهید
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Security Check Results */}
             {securityResult && (
               <SecurityCheck result={securityResult} className="mb-6" />
@@ -300,7 +352,7 @@ export default function Home() {
             {isDownloading && (
               <DownloadProgress
                 progress={downloadProgress}
-                fileName={fileData?.name || ""}
+                fileName={fileData?.name || "محتوا"}
                 className="mb-6"
               />
             )}
@@ -309,11 +361,7 @@ export default function Home() {
             <div className="space-y-4">
               <button
                 onClick={handleDownload}
-                disabled={
-                  !fileData ||
-                  isDownloading ||
-                  (securityResult && !securityResult.isSafe)
-                }
+                disabled={!canDownload || isDownloading}
                 className="w-full bg-gradient-to-r from-purple-600 via-purple-700 to-purple-800 hover:from-purple-700 hover:via-purple-800 hover:to-purple-900 disabled:from-gray-600 disabled:to-gray-700 text-white font-semibold py-4 px-6 rounded-2xl shadow-xl hover:shadow-purple-500/25 transition-all duration-300 flex items-center justify-center gap-3 group relative overflow-hidden"
               >
                 <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/10 to-white/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700"></div>
@@ -325,7 +373,9 @@ export default function Home() {
                 ) : (
                   <>
                     <Download className="w-5 h-5 group-hover:animate-bounce" />
-                    دانلود امن فایل
+                    {securityResult?.riskLevel === "high"
+                      ? "دانلود با خطر بالا"
+                      : "دانلود محتوا"}
                   </>
                 )}
               </button>
@@ -349,10 +399,7 @@ export default function Home() {
                   )}
                 </button>
 
-                <button
-                  disabled={!fileData}
-                  className="bg-white/10 hover:bg-white/20 disabled:bg-white/5 text-white font-medium py-3 px-4 rounded-xl border border-white/20 hover:border-white/40 transition-all duration-200 flex items-center justify-center gap-2 group"
-                >
+                <button className="bg-white/10 hover:bg-white/20 text-white font-medium py-3 px-4 rounded-xl border border-white/20 hover:border-white/40 transition-all duration-200 flex items-center justify-center gap-2 group">
                   <Share2 className="w-4 h-4 group-hover:scale-110 transition-transform" />
                   اشتراک
                 </button>
@@ -364,7 +411,7 @@ export default function Home() {
               <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl">
                 <div className="flex items-center gap-2 text-amber-400 text-sm">
                   <AlertTriangle className="w-4 h-4" />
-                  <span>تعداد تلاش: {downloadAttempts}/3</span>
+                  <span>تعداد تلاش: {downloadAttempts}/5</span>
                 </div>
               </div>
             )}
@@ -375,13 +422,25 @@ export default function Home() {
         <div className="text-center mt-8">
           <div className="flex items-center justify-center gap-2 text-gray-400 text-sm mb-2">
             <Shield className="w-4 h-4 text-green-400" />
-            <span>تمام فایل‌ها قبل از دانلود بررسی امنیتی می‌شوند</span>
+            <span>
+              همه لینک‌ها بررسی امنیتی می‌شوند و هشدارهای لازم ارائه می‌گردد
+            </span>
           </div>
           <p className="text-gray-500 text-xs">
-            حداکثر حجم: 5GB • فرمت‌های مجاز: ZIP, PDF, DOC, IMG, VIDEO
+            پشتیبانی از YouTube، وب‌سایت‌ها، فایل‌ها و محتوای آنلاین
           </p>
         </div>
       </div>
+
+      {/* Risk Confirmation Modal */}
+      {showRiskModal && securityResult && (
+        <RiskConfirmationModal
+          securityResult={securityResult}
+          url={url}
+          onAccept={handleRiskAccepted}
+          onCancel={() => setShowRiskModal(false)}
+        />
+      )}
     </div>
   );
 }
