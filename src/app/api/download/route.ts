@@ -1,11 +1,417 @@
 import { type NextRequest, NextResponse } from "next/server";
+import puppeteer from "puppeteer";
+
+// Enhanced video extraction with Puppeteer
+async function extractVideoWithPuppeteer(
+  url: string
+): Promise<{ videoUrl: string; title: string; size?: number } | null> {
+  console.log("🤖 Starting Puppeteer extraction for:", url);
+
+  let browser = null;
+
+  try {
+    // Launch Puppeteer with stealth settings
+    browser = await puppeteer.launch({
+      headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-accelerated-2d-canvas",
+        "--no-first-run",
+        "--no-zygote",
+        "--disable-gpu",
+        "--disable-web-security",
+        "--disable-features=VizDisplayCompositor",
+        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      ],
+    });
+
+    const page = await browser.newPage();
+
+    // Set realistic viewport and user agent
+    await page.setViewport({ width: 1920, height: 1080 });
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    );
+
+    // Set extra headers to look more human
+    await page.setExtraHTTPHeaders({
+      Accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+      "Accept-Encoding": "gzip, deflate, br",
+      DNT: "1",
+      Connection: "keep-alive",
+      "Upgrade-Insecure-Requests": "1",
+    });
+
+    // Intercept network requests to capture video URLs
+    const videoUrls: string[] = [];
+    const interceptedRequests: any[] = [];
+
+    await page.setRequestInterception(true);
+
+    page.on("request", (request) => {
+      const url = request.url();
+      const resourceType = request.resourceType();
+
+      // Log all requests for debugging
+      interceptedRequests.push({ url, resourceType });
+
+      // Capture video URLs
+      if (
+        resourceType === "media" ||
+        url.includes(".mp4") ||
+        url.includes(".m3u8") ||
+        url.includes("googlevideo.com") ||
+        url.includes("cdninstagram.com") ||
+        url.includes("tiktokcdn.com") ||
+        url.includes("twimg.com")
+      ) {
+        console.log("🎥 Found potential video URL:", url);
+        videoUrls.push(url);
+      }
+
+      request.continue();
+    });
+
+    console.log("🌐 Navigating to page...");
+
+    // Navigate to the page with timeout
+    await page.goto(url, {
+      waitUntil: "networkidle2",
+      timeout: 30000,
+    });
+
+    console.log("⏳ Waiting for page to load completely...");
+
+    // Wait a bit for dynamic content to load
+    await page.waitForTimeout(3000);
+
+    // Platform-specific extraction
+    let result = null;
+
+    if (url.includes("youtube.com") || url.includes("youtu.be")) {
+      result = await extractYouTubeWithPuppeteer(page, videoUrls);
+    } else if (url.includes("instagram.com")) {
+      result = await extractInstagramWithPuppeteer(page, videoUrls);
+    } else if (url.includes("tiktok.com")) {
+      result = await extractTikTokWithPuppeteer(page, videoUrls);
+    } else if (url.includes("twitter.com") || url.includes("x.com")) {
+      result = await extractTwitterWithPuppeteer(page, videoUrls);
+    } else {
+      result = await extractGenericWithPuppeteer(page, videoUrls);
+    }
+
+    console.log("📊 Extraction result:", result);
+    console.log("🔍 Total intercepted requests:", interceptedRequests.length);
+    console.log("🎥 Video URLs found:", videoUrls.length);
+
+    return result;
+  } catch (error) {
+    console.error("❌ Puppeteer extraction failed:", error);
+    return null;
+  } finally {
+    if (browser) {
+      await browser.close();
+      console.log("🔒 Browser closed");
+    }
+  }
+}
+
+async function extractYouTubeWithPuppeteer(page: any, videoUrls: string[]) {
+  console.log("🎥 Extracting YouTube with Puppeteer...");
+
+  try {
+    // Wait for video player to load
+    await page.waitForSelector("video", { timeout: 10000 }).catch(() => {});
+
+    // Try to get title
+    let title = "YouTube-Video";
+    try {
+      const titleElement = await page.$(
+        "h1.ytd-watch-metadata yt-formatted-string"
+      );
+      if (titleElement) {
+        title = await page.evaluate((el: any) => el.textContent, titleElement);
+        title = title.trim().substring(0, 50);
+      }
+    } catch (e) {
+      console.log("Could not extract title");
+    }
+
+    // Look for video URLs in intercepted requests
+    const youtubeVideoUrls = videoUrls.filter(
+      (url) =>
+        url.includes("googlevideo.com") &&
+        (url.includes("itag=") || url.includes(".mp4"))
+    );
+
+    if (youtubeVideoUrls.length > 0) {
+      console.log("✅ Found YouTube video URL via network interception");
+      return {
+        videoUrl: youtubeVideoUrls[0],
+        title: title.replace(/[^\w\s\u0600-\u06FF]/g, "-"),
+        size: 50000000,
+      };
+    }
+
+    // Try to extract from page source
+    const videoUrl = await page.evaluate(() => {
+      // Look for video URLs in window objects
+      const scripts = Array.from(document.querySelectorAll("script"));
+      for (const script of scripts) {
+        const content = script.innerHTML;
+
+        // Look for various patterns
+        const patterns = [
+          /"url":"([^"]*itag=18[^"]*)"/g,
+          /"url":"([^"]*itag=22[^"]*)"/g,
+          /https:\/\/[^"'\s]*\.googlevideo\.com[^"'\s]*\.mp4[^"'\s]*/g,
+        ];
+
+        for (const pattern of patterns) {
+          const matches = [...content.matchAll(pattern)];
+          for (const match of matches) {
+            let url = match[1] || match[0];
+            url = url.replace(/\\u0026/g, "&").replace(/\\/g, "");
+            if (url && url.includes("googlevideo.com")) {
+              return url;
+            }
+          }
+        }
+      }
+      return null;
+    });
+
+    if (videoUrl) {
+      console.log("✅ Found YouTube video URL via page evaluation");
+      return {
+        videoUrl: videoUrl,
+        title: title.replace(/[^\w\s\u0600-\u06FF]/g, "-"),
+        size: 50000000,
+      };
+    }
+
+    throw new Error("Could not extract YouTube video URL");
+  } catch (error) {
+    console.error("❌ YouTube Puppeteer extraction failed:", error);
+    throw error;
+  }
+}
+
+async function extractInstagramWithPuppeteer(page: any, videoUrls: string[]) {
+  console.log("📸 Extracting Instagram with Puppeteer...");
+
+  try {
+    // Wait for content to load
+    await page.waitForTimeout(2000);
+
+    // Look for video URLs in intercepted requests
+    const instagramVideoUrls = videoUrls.filter(
+      (url) => url.includes("cdninstagram.com") && url.includes(".mp4")
+    );
+
+    if (instagramVideoUrls.length > 0) {
+      console.log("✅ Found Instagram video URL via network interception");
+      return {
+        videoUrl: instagramVideoUrls[0],
+        title: "Instagram-Video",
+        size: 25000000,
+      };
+    }
+
+    // Try to extract from page
+    const videoUrl = await page.evaluate(() => {
+      // Look for video elements
+      const videos = document.querySelectorAll("video");
+      for (const video of videos) {
+        if (video.src && video.src.includes(".mp4")) {
+          return video.src;
+        }
+      }
+
+      // Look in meta tags
+      const metaVideo = document.querySelector('meta[property="og:video"]');
+      if (metaVideo && metaVideo.getAttribute("content")) {
+        return metaVideo.getAttribute("content");
+      }
+
+      return null;
+    });
+
+    if (videoUrl) {
+      console.log("✅ Found Instagram video URL via page evaluation");
+      return {
+        videoUrl: videoUrl,
+        title: "Instagram-Video",
+        size: 25000000,
+      };
+    }
+
+    throw new Error("Could not extract Instagram video URL");
+  } catch (error) {
+    console.error("❌ Instagram Puppeteer extraction failed:", error);
+    throw error;
+  }
+}
+
+async function extractTikTokWithPuppeteer(page: any, videoUrls: string[]) {
+  console.log("🎵 Extracting TikTok with Puppeteer...");
+
+  try {
+    // Wait for video to load
+    await page.waitForSelector("video", { timeout: 10000 }).catch(() => {});
+
+    // Look for video URLs in intercepted requests
+    const tiktokVideoUrls = videoUrls.filter(
+      (url) => url.includes("tiktokcdn.com") && url.includes(".mp4")
+    );
+
+    if (tiktokVideoUrls.length > 0) {
+      console.log("✅ Found TikTok video URL via network interception");
+      return {
+        videoUrl: tiktokVideoUrls[0],
+        title: "TikTok-Video",
+        size: 15000000,
+      };
+    }
+
+    // Try to extract from page
+    const videoUrl = await page.evaluate(() => {
+      const videos = document.querySelectorAll("video");
+      for (const video of videos) {
+        if (video.src && video.src.includes(".mp4")) {
+          return video.src;
+        }
+      }
+      return null;
+    });
+
+    if (videoUrl) {
+      console.log("✅ Found TikTok video URL via page evaluation");
+      return {
+        videoUrl: videoUrl,
+        title: "TikTok-Video",
+        size: 15000000,
+      };
+    }
+
+    throw new Error("Could not extract TikTok video URL");
+  } catch (error) {
+    console.error("❌ TikTok Puppeteer extraction failed:", error);
+    throw error;
+  }
+}
+
+async function extractTwitterWithPuppeteer(page: any, videoUrls: string[]) {
+  console.log("🐦 Extracting Twitter with Puppeteer...");
+
+  try {
+    // Wait for content to load
+    await page.waitForTimeout(3000);
+
+    // Look for video URLs in intercepted requests
+    const twitterVideoUrls = videoUrls.filter(
+      (url) => url.includes("twimg.com") && url.includes(".mp4")
+    );
+
+    if (twitterVideoUrls.length > 0) {
+      console.log("✅ Found Twitter video URL via network interception");
+      return {
+        videoUrl: twitterVideoUrls[0],
+        title: "Twitter-Video",
+        size: 20000000,
+      };
+    }
+
+    // Try to extract from page
+    const videoUrl = await page.evaluate(() => {
+      const videos = document.querySelectorAll("video");
+      for (const video of videos) {
+        if (video.src && video.src.includes(".mp4")) {
+          return video.src;
+        }
+      }
+      return null;
+    });
+
+    if (videoUrl) {
+      console.log("✅ Found Twitter video URL via page evaluation");
+      return {
+        videoUrl: videoUrl,
+        title: "Twitter-Video",
+        size: 20000000,
+      };
+    }
+
+    throw new Error("Could not extract Twitter video URL");
+  } catch (error) {
+    console.error("❌ Twitter Puppeteer extraction failed:", error);
+    throw error;
+  }
+}
+
+async function extractGenericWithPuppeteer(page: any, videoUrls: string[]) {
+  console.log("🔗 Extracting generic video with Puppeteer...");
+
+  try {
+    // Look for any video URLs in intercepted requests
+    const genericVideoUrls = videoUrls.filter((url) => url.includes(".mp4"));
+
+    if (genericVideoUrls.length > 0) {
+      console.log("✅ Found generic video URL via network interception");
+      return {
+        videoUrl: genericVideoUrls[0],
+        title: "Generic-Video",
+        size: 10000000,
+      };
+    }
+
+    // Try to extract from page
+    const videoUrl = await page.evaluate(() => {
+      // Look for video elements
+      const videos = document.querySelectorAll("video");
+      for (const video of videos) {
+        if (video.src) {
+          return video.src;
+        }
+      }
+
+      // Look for source elements
+      const sources = document.querySelectorAll("source");
+      for (const source of sources) {
+        if (source.src && source.src.includes(".mp4")) {
+          return source.src;
+        }
+      }
+
+      return null;
+    });
+
+    if (videoUrl) {
+      console.log("✅ Found generic video URL via page evaluation");
+      return {
+        videoUrl: videoUrl,
+        title: "Generic-Video",
+        size: 10000000,
+      };
+    }
+
+    throw new Error("Could not extract generic video URL");
+  } catch (error) {
+    console.error("❌ Generic Puppeteer extraction failed:", error);
+    throw error;
+  }
+}
 
 export const POST = async (req: NextRequest) => {
   try {
     const body = await req.json();
     const { url, metadataOnly } = body;
 
-    console.log("🚀 Processing URL:", url);
+    console.log("🚀 Processing URL with Puppeteer:", url);
 
     if (!url || typeof url !== "string") {
       return NextResponse.json({ error: "URL is required" }, { status: 400 });
@@ -13,313 +419,73 @@ export const POST = async (req: NextRequest) => {
 
     const cleanUrl = url.trim();
 
-    // YouTube - Try multiple methods
-    if (cleanUrl.includes("youtube.com") || cleanUrl.includes("youtu.be")) {
-      try {
-        console.log("🎥 YouTube URL detected, trying download methods...");
+    // Extract video URL using Puppeteer
+    const extractionResult = await extractVideoWithPuppeteer(cleanUrl);
 
-        // Method 1: Try ytdl-core first
-        try {
-          const ytdl = await import("ytdl-core");
-
-          if (!ytdl.validateURL(cleanUrl)) {
-            throw new Error("Invalid YouTube URL format");
-          }
-
-          console.log("✅ Valid YouTube URL, getting info...");
-
-          // Set custom headers to avoid bot detection
-          const info = await ytdl.getInfo(cleanUrl, {
-            requestOptions: {
-              headers: {
-                "User-Agent":
-                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                Accept:
-                  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Accept-Encoding": "gzip, deflate",
-                DNT: "1",
-                Connection: "keep-alive",
-                "Upgrade-Insecure-Requests": "1",
-              },
-            },
-          });
-
-          if (metadataOnly) {
-            const format = ytdl.chooseFormat(info.formats, {
-              quality: "highest",
-              filter: "videoandaudio",
-            });
-            return NextResponse.json({
-              size: format.contentLength
-                ? Number.parseInt(format.contentLength)
-                : 50000000,
-              contentType: "video/mp4",
-              title: info.videoDetails.title,
-              success: true,
-              isRealVideo: true,
-            });
-          }
-
-          console.log("⬇️ Starting YouTube download with ytdl-core...");
-
-          const title = info.videoDetails.title
-            .replace(/[^\w\s\u0600-\u06FF]/gi, "")
-            .substring(0, 50);
-          const filename = `${title}.mp4`;
-
-          // Get the best quality format
-          const format = ytdl.chooseFormat(info.formats, {
-            quality: "highest",
-            filter: "videoandaudio",
-          });
-          console.log("📊 Selected format:", {
-            quality: format.qualityLabel,
-            size: format.contentLength,
-            container: format.container,
-          });
-
-          // Create readable stream with custom options
-          const videoStream = ytdl(cleanUrl, {
-            quality: "highest",
-            filter: "videoandaudio",
-            requestOptions: {
-              headers: {
-                "User-Agent":
-                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              },
-            },
-          });
-
-          // Convert to Web Stream
-          const readableStream = new ReadableStream({
-            start(controller) {
-              videoStream.on("data", (chunk) => {
-                controller.enqueue(new Uint8Array(chunk));
-              });
-
-              videoStream.on("end", () => {
-                console.log("✅ YouTube stream completed");
-                controller.close();
-              });
-
-              videoStream.on("error", (error) => {
-                console.error("❌ YouTube stream error:", error);
-                controller.error(error);
-              });
-            },
-          });
-
-          return new NextResponse(readableStream, {
-            headers: {
-              "Content-Type": "video/mp4",
-              "Content-Disposition": `attachment; filename="${filename}"`,
-              "Cache-Control": "no-cache",
-              "Content-Length": format.contentLength || "",
-            },
-          });
-        } catch (ytdlError) {
-          console.error("❌ ytdl-core failed:", ytdlError);
-
-          // Method 2: Fallback to direct URL extraction
-          console.log("🔄 Trying direct URL extraction...");
-
-          try {
-            const response = await fetch(cleanUrl, {
-              headers: {
-                "User-Agent":
-                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                Accept:
-                  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                Referer: "https://www.youtube.com/",
-              },
-              timeout: 15000,
-            });
-
-            if (!response.ok) {
-              throw new Error(`HTTP ${response.status}`);
-            }
-
-            const html = await response.text();
-
-            // Look for video URLs in the page
-            const videoUrlPatterns = [
-              /"url":"([^"]*\.mp4[^"]*)"/g,
-              /"videoDetails".*?"videoId":"([^"]+)"/g,
-            ];
-
-            let videoUrl = "";
-            for (const pattern of videoUrlPatterns) {
-              const matches = [...html.matchAll(pattern)];
-              if (matches.length > 0) {
-                videoUrl = matches[0][1];
-                break;
-              }
-            }
-
-            if (videoUrl) {
-              console.log("✅ Found video URL via extraction");
-
-              if (metadataOnly) {
-                return NextResponse.json({
-                  size: 50000000,
-                  contentType: "video/mp4",
-                  title: "YouTube-Video",
-                  success: true,
-                  isRealVideo: true,
-                });
-              }
-
-              // Try to download the extracted URL
-              const videoResponse = await fetch(videoUrl, {
-                headers: {
-                  "User-Agent":
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                  Referer: "https://www.youtube.com/",
-                },
-              });
-
-              if (videoResponse.ok && videoResponse.body) {
-                return new NextResponse(videoResponse.body, {
-                  headers: {
-                    "Content-Type": "video/mp4",
-                    "Content-Disposition": `attachment; filename="YouTube-Video.mp4"`,
-                    "Cache-Control": "no-cache",
-                  },
-                });
-              }
-            }
-
-            throw new Error("Could not extract video URL from page");
-          } catch (extractError) {
-            console.error("❌ Direct extraction failed:", extractError);
-
-            // Method 3: Return helpful error with alternatives
-            return NextResponse.json(
-              {
-                error:
-                  "YouTube bot protection detected. Please try one of these alternatives:\n\n" +
-                  "1. Use SaveFrom.net: https://savefrom.net\n" +
-                  "2. Use Y2Mate: https://y2mate.com\n" +
-                  "3. Use yt-dlp command line tool\n" +
-                  "4. Try again in a few minutes\n\n" +
-                  "YouTube has enhanced bot protection that blocks automated downloads.",
-                isYouTubeBlocked: true,
-                alternatives: [
-                  { name: "SaveFrom.net", url: "https://savefrom.net" },
-                  { name: "Y2Mate", url: "https://y2mate.com" },
-                  { name: "SnapInsta", url: "https://snapinsta.app" },
-                ],
-              },
-              { status: 429 }
-            ); // 429 = Too Many Requests (rate limited)
-          }
-        }
-      } catch (error) {
-        console.error("❌ All YouTube methods failed:", error);
-        return NextResponse.json(
-          {
-            error:
-              "YouTube download temporarily unavailable due to bot protection. Please use alternative methods.",
-            isYouTubeBlocked: true,
-          },
-          { status: 503 }
-        ); // 503 = Service Unavailable
-      }
-    }
-
-    // For non-YouTube URLs - Try direct file download
-    console.log("🔍 Attempting direct file download...");
-
-    try {
-      // First, check if it's a direct file URL
-      const response = await fetch(cleanUrl, {
-        method: "HEAD",
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        },
-        timeout: 10000,
-      });
-
-      const contentType = response.headers.get("content-type") || "";
-      const contentLength = response.headers.get("content-length");
-
-      console.log("📋 Direct URL check:", {
-        status: response.status,
-        contentType,
-        contentLength,
-      });
-
-      // If it's a direct media file
-      if (
-        contentType.includes("video/") ||
-        contentType.includes("audio/") ||
-        contentType.includes("image/")
-      ) {
-        if (metadataOnly) {
-          return NextResponse.json({
-            size: contentLength ? Number.parseInt(contentLength) : 10000000,
-            contentType: contentType,
-            title: "Direct-File",
-            success: true,
-            isRealVideo: true,
-          });
-        }
-
-        console.log("✅ Direct media file detected, downloading...");
-
-        // Download the file directly
-        const fileResponse = await fetch(cleanUrl, {
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          },
-        });
-
-        if (!fileResponse.ok) {
-          throw new Error(`Failed to fetch file: ${fileResponse.status}`);
-        }
-
-        // Get filename from URL
-        const urlPath = new URL(cleanUrl).pathname;
-        const filename = urlPath.split("/").pop() || "download";
-
-        return new NextResponse(fileResponse.body, {
-          headers: {
-            "Content-Type": contentType,
-            "Content-Disposition": `attachment; filename="${filename}"`,
-            "Cache-Control": "no-cache",
-            "Content-Length": contentLength || "",
-          },
-        });
-      }
-
-      // If not a direct file, return error
+    if (!extractionResult) {
       return NextResponse.json(
         {
           error:
-            "This URL is not supported. Only direct file URLs and YouTube (when not blocked) are supported.",
-          supportedTypes: [
-            "Direct video/audio/image files",
-            "YouTube (when available)",
-          ],
-        },
-        { status: 400 }
-      );
-    } catch (directError) {
-      console.error("❌ Direct download failed:", directError);
-      return NextResponse.json(
-        {
-          error:
-            "Failed to download file. URL may not be accessible or may not be a direct file link.",
+            "Could not extract video from this URL. The platform may have enhanced protection or the URL format is not supported.",
         },
         { status: 400 }
       );
     }
+
+    const { videoUrl, title, size } = extractionResult;
+
+    if (metadataOnly) {
+      return NextResponse.json({
+        size: size || 25000000,
+        contentType: "video/mp4",
+        title: title,
+        success: true,
+        isRealVideo: true,
+      });
+    }
+
+    console.log("⬇️ Downloading video from extracted URL:", videoUrl);
+
+    // Download the actual video with proper headers
+    const videoResponse = await fetch(videoUrl, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Referer: new URL(cleanUrl).origin,
+        Accept: "*/*",
+        "Accept-Encoding": "identity",
+        Range: "bytes=0-", // Support range requests
+      },
+      timeout: 300000, // 5 minutes
+    });
+
+    if (!videoResponse.ok) {
+      throw new Error(
+        `Failed to download video: ${videoResponse.status} ${videoResponse.statusText}`
+      );
+    }
+
+    console.log("✅ Video download response received");
+    console.log("Content-Type:", videoResponse.headers.get("content-type"));
+    console.log("Content-Length:", videoResponse.headers.get("content-length"));
+
+    const contentType =
+      videoResponse.headers.get("content-type") || "video/mp4";
+    const contentLength = videoResponse.headers.get("content-length");
+    const filename = `${title.replace(/[^\w\s\u0600-\u06FF]/g, "-")}.mp4`;
+
+    // Return the video stream directly
+    return new NextResponse(videoResponse.body, {
+      headers: {
+        "Content-Type": contentType,
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Cache-Control": "no-cache",
+        "Content-Length": contentLength || "",
+        "Accept-Ranges": "bytes",
+      },
+    });
   } catch (error) {
-    console.error("💥 API Error:", error);
+    console.error("💥 Puppeteer API Error:", error);
     return NextResponse.json(
       {
         error:

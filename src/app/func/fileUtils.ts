@@ -60,11 +60,7 @@ export async function checkUrlSecurity(url: string): Promise<SecurityResult> {
       riskLevel = "medium";
     }
 
-    if (url.includes("youtube.com") || url.includes("youtu.be")) {
-      warnings.push("یوتیوب: ممکن است محافظت ضد ربات فعال باشد");
-    } else {
-      warnings.push("دانلود مستقیم فایل - فقط لینک‌های مستقیم");
-    }
+    warnings.push("استخراج هوشمند ویدیو - پشتیبانی از چندین پلتفرم");
   } catch (error) {
     warnings.push("خطا در بررسی امنیتی");
   }
@@ -87,6 +83,12 @@ export async function detectFileInfo(url: string): Promise<FileInfo | null> {
     if (url.includes("youtube.com") || url.includes("youtu.be")) {
       const videoId = extractYouTubeVideoId(url);
       filename = `YouTube-${videoId || "Video"}.mp4`;
+    } else if (url.includes("instagram.com")) {
+      filename = "Instagram-Video.mp4";
+    } else if (url.includes("tiktok.com")) {
+      filename = "TikTok-Video.mp4";
+    } else if (url.includes("twitter.com") || url.includes("x.com")) {
+      filename = "Twitter-Video.mp4";
     } else {
       // Try to get filename from URL path
       const pathParts = urlObj.pathname.split("/");
@@ -102,18 +104,18 @@ export async function detectFileInfo(url: string): Promise<FileInfo | null> {
       }
     }
 
-    // Get metadata from API with shorter timeout and better error handling
+    // Get metadata from API with proper timeout
     let fileSize =
       Math.floor(Math.random() * 100 * 1024 * 1024) + 20 * 1024 * 1024;
     let contentType = getContentType(extension);
     let lastModified = new Date().toISOString();
-    let isRealVideo = false;
+    let isRealVideo = true; // Default to true since we're crawling
 
     try {
-      console.log("📡 Getting metadata from API");
+      console.log("📡 Getting metadata from crawling API");
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000); // Reduced to 5 seconds
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 seconds for crawling
 
       const response = await fetch("/api/download", {
         method: "POST",
@@ -126,7 +128,7 @@ export async function detectFileInfo(url: string): Promise<FileInfo | null> {
 
       if (response.ok) {
         const data = await response.json();
-        console.log("📊 API metadata response:", data);
+        console.log("📊 Crawling API response:", data);
 
         if (data.success) {
           if (data.size) fileSize = data.size;
@@ -140,16 +142,17 @@ export async function detectFileInfo(url: string): Promise<FileInfo | null> {
           }
           isRealVideo = data.isRealVideo === true;
         }
-      } else if (response.status === 429 || response.status === 503) {
-        // YouTube is blocked, but we can still show file info
-        console.warn("⚠️ YouTube blocked, using default metadata");
-        isRealVideo = false; // Mark as not real video since it's blocked
       } else {
-        console.warn("⚠️ API returned error:", response.status);
+        console.warn("⚠️ Crawling API returned error:", response.status);
+        isRealVideo = false; // Mark as failed if API fails
       }
     } catch (error: any) {
-      console.warn("⚠️ Could not fetch metadata:", error.name, error.message);
-      // Don't throw error, just use defaults
+      console.warn(
+        "⚠️ Could not fetch metadata from crawling API:",
+        error.name,
+        error.message
+      );
+      isRealVideo = false; // Mark as failed if timeout/error
     }
 
     const result = {
@@ -184,10 +187,10 @@ export async function downloadFile(
   onProgress: (progress: number) => void
 ): Promise<void> {
   try {
-    console.log("🚀 Starting download:", { url, filename });
+    console.log("🚀 Starting crawling download:", { url, filename });
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minutes
+    const timeoutId = setTimeout(() => controller.abort(), 600000); // 10 minutes
 
     onProgress(5);
 
@@ -204,52 +207,16 @@ export async function downloadFile(
       const errorData = await response
         .json()
         .catch(() => ({ error: "Unknown API error" }));
-
-      // Handle YouTube bot protection specifically
-      if (response.status === 429 || response.status === 503) {
-        if (errorData.isYouTubeBlocked) {
-          throw new Error(
-            "یوتیوب محافظت ضد ربات فعال کرده است.\n\n" +
-              "لطفاً از این روش‌های جایگزین استفاده کنید:\n" +
-              "• SaveFrom.net\n" +
-              "• Y2Mate.com\n" +
-              "• SnapInsta.app\n\n" +
-              "یا چند دقیقه دیگر دوباره تلاش کنید."
-          );
-        }
-      }
-
       throw new Error(errorData.error || `Server error: ${response.status}`);
     }
 
-    console.log("📥 Response received");
+    console.log("📥 Crawling response received");
     console.log("Content-Type:", response.headers.get("content-type"));
     console.log("Content-Length:", response.headers.get("content-length"));
 
-    const contentType = response.headers.get("content-type") || "";
+    const contentType = response.headers.get("content-type") || "video/mp4";
     const contentLength = response.headers.get("content-length");
     const total = contentLength ? Number.parseInt(contentLength) : 0;
-
-    // Only accept video/audio/image content - reject text
-    if (contentType.includes("text/")) {
-      throw new Error(
-        "سرور راهنمای متنی ارسال کرد به جای فایل واقعی - لینک پشتیبانی نمی‌شود"
-      );
-    }
-
-    if (
-      !contentType.includes("video/") &&
-      !contentType.includes("audio/") &&
-      !contentType.includes("image/")
-    ) {
-      console.warn("⚠️ Unexpected content type:", contentType);
-    }
-
-    console.log(
-      `📋 Content type: ${contentType} - ${
-        contentType.includes("video/") ? "Video" : "Other"
-      }`
-    );
 
     if (!response.body) {
       throw new Error("No response body received");
@@ -259,9 +226,9 @@ export async function downloadFile(
     const chunks: Uint8Array[] = [];
     let received = 0;
 
-    onProgress(10);
-
     try {
+      let progressUpdateTime = Date.now();
+
       while (true) {
         const { done, value } = await reader.read();
 
@@ -278,25 +245,33 @@ export async function downloadFile(
         chunks.push(value);
         received += value.length;
 
-        // Calculate progress
-        let progressPercent = 10;
-        if (total > 0) {
-          progressPercent = 10 + (received / total) * 85;
-        } else {
-          // Estimate for unknown size
-          const estimatedTotal = 50 * 1024 * 1024; // 50MB
-          progressPercent = 10 + Math.min((received / estimatedTotal) * 80, 80);
-        }
+        const now = Date.now();
+        if (now - progressUpdateTime > 500) {
+          let progressPercent = 10;
+          if (total > 0) {
+            progressPercent = Math.min(10 + (received / total) * 85, 95);
+          } else {
+            // Dynamic progress estimation with a smoother curve
+            const estimatedTotal = estimateFileSize(url);
+            progressPercent = Math.min(
+              10 + (received / estimatedTotal) * 85,
+              95
+            );
+          }
 
-        onProgress(Math.min(progressPercent, 95));
+          onProgress(progressPercent);
+          progressUpdateTime = now;
 
-        // Log progress every MB
-        if (received % (1024 * 1024) < value.length) {
-          console.log(
-            `📊 Downloaded: ${(received / 1024 / 1024).toFixed(1)}MB`
-          );
+          if (received % (5 * 1024 * 1024) < value.length) {
+            console.log(
+              `📊 Downloaded: ${(received / 1024 / 1024).toFixed(1)}MB`
+            );
+          }
         }
       }
+    } catch (error) {
+      console.error("❌ Stream reading error:", error);
+      throw new Error("Failed to read response stream");
     } finally {
       reader.releaseLock();
     }
@@ -305,22 +280,16 @@ export async function downloadFile(
       throw new Error("No data received - the download failed");
     }
 
-    console.log(
-      `✅ Total received: ${(received / 1024 / 1024).toFixed(
-        1
-      )}MB (${received} bytes)`
-    );
+    console.log(`✅ Total received: ${(received / 1024 / 1024).toFixed(1)}MB`);
 
-    // Validate minimum file size for videos
-    if (contentType.includes("video/") && received < 100000) {
+    if (contentType.includes("video/") && received < 500000) {
       throw new Error(
-        `ویدیو خیلی کوچک است (${received} bytes) - احتمالاً خطا یا فایل ناقص`
+        `Video too small (${received} bytes) - extraction likely failed`
       );
     }
 
     onProgress(98);
 
-    // Combine chunks
     const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
     const allChunks = new Uint8Array(totalLength);
     let position = 0;
@@ -330,19 +299,12 @@ export async function downloadFile(
       position += chunk.length;
     }
 
-    console.log(`📦 Combined chunks: ${allChunks.length} bytes`);
-
-    // Create blob with correct type
     const blob = new Blob([allChunks], { type: contentType });
-    console.log(`💾 Created blob: ${blob.size} bytes, type: ${blob.type}`);
-
     const downloadUrl = URL.createObjectURL(blob);
 
     const link = document.createElement("a");
     link.href = downloadUrl;
     link.download = filename;
-    link.style.display = "none";
-
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -353,31 +315,18 @@ export async function downloadFile(
     }, 1000);
 
     onProgress(100);
-    console.log("🎉 File download completed successfully!");
-    console.log(`Final file size: ${(blob.size / 1024 / 1024).toFixed(2)}MB`);
+    console.log(
+      `🎉 Video download completed: ${(blob.size / 1024 / 1024).toFixed(2)}MB`
+    );
   } catch (error) {
     console.error("💥 Download failed:", error);
-
-    let errorMessage = "خطای ناشناخته";
-    if (error instanceof Error) {
-      if (error.name === "AbortError") {
-        errorMessage = "زمان انتظار تمام شد - فایل خیلی بزرگ است";
-      } else if (error.message.includes("Failed to fetch")) {
-        errorMessage = "خطا در اتصال - اتصال اینترنت را بررسی کنید";
-      } else if (error.message.includes("یوتیوب محافظت")) {
-        errorMessage = error.message; // Use the full YouTube protection message
-      } else if (error.message.includes("راهنمای متنی")) {
-        errorMessage =
-          "این لینک پشتیبانی نمی‌شود - فقط یوتیوب و لینک‌های مستقیم فایل";
-      } else {
-        errorMessage = error.message;
-      }
+    let errorMessage = error instanceof Error ? error.message : "Unknown error";
+    if (error instanceof Error && error.name === "AbortError") {
+      errorMessage = "Download timed out - video too large or connection slow";
     }
-
-    throw new Error(`دانلود ناموفق: ${errorMessage}`);
+    throw new Error(`Download failed: ${errorMessage}`);
   }
 }
-
 function getContentType(extension: string): string {
   const mimeTypes: Record<string, string> = {
     mp4: "video/mp4",
